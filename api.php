@@ -39,7 +39,16 @@ switch ($action) {
         if (!empty($records[$today]['in'])) {
             reply(false, 'Naka-time in ka na ngayong araw.', $records, 409);
         }
-        $records[$today] = ['in' => $now, 'out' => null, 'note' => trim($_POST['note'] ?? '')];
+        $loc = null;
+        if (isset($_POST['lat'], $_POST['lng']) && is_numeric($_POST['lat']) && is_numeric($_POST['lng'])) {
+            $loc = [
+                'lat'   => round((float)$_POST['lat'], 6),
+                'lng'   => round((float)$_POST['lng'], 6),
+                'acc'   => (int)($_POST['acc'] ?? 0),
+                'place' => trim($_POST['place'] ?? ''),
+            ];
+        }
+        $records[$today] = ['in' => $now, 'out' => null, 'note' => trim($_POST['note'] ?? ''), 'loc' => $loc];
         save($file, $records);
         reply(true, "Time in: " . date('h:i A'), $records);
 
