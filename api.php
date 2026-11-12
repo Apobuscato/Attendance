@@ -13,6 +13,17 @@ function load($file) {
 function save($file, $d) {
     file_put_contents($file, json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
 }
+function readLoc() {
+    if (isset($_POST['lat'], $_POST['lng']) && is_numeric($_POST['lat']) && is_numeric($_POST['lng'])) {
+        return [
+            'lat'   => round((float)$_POST['lat'], 6),
+            'lng'   => round((float)$_POST['lng'], 6),
+            'acc'   => (int)($_POST['acc'] ?? 0),
+            'place' => trim($_POST['place'] ?? ''),
+        ];
+    }
+    return null;
+}
 function reply($ok, $msg, $records, $code = 200) {
     http_response_code($code);
     krsort($records);
@@ -39,16 +50,7 @@ switch ($action) {
         if (!empty($records[$today]['in'])) {
             reply(false, 'Naka-time in ka na ngayong araw.', $records, 409);
         }
-        $loc = null;
-        if (isset($_POST['lat'], $_POST['lng']) && is_numeric($_POST['lat']) && is_numeric($_POST['lng'])) {
-            $loc = [
-                'lat'   => round((float)$_POST['lat'], 6),
-                'lng'   => round((float)$_POST['lng'], 6),
-                'acc'   => (int)($_POST['acc'] ?? 0),
-                'place' => trim($_POST['place'] ?? ''),
-            ];
-        }
-        $records[$today] = ['in' => $now, 'out' => null, 'note' => trim($_POST['note'] ?? ''), 'loc' => $loc];
+        $records[$today] = ['in' => $now, 'out' => null, 'note' => trim($_POST['note'] ?? ''), 'loc' => readLoc(), 'loc_out' => null];
         save($file, $records);
         reply(true, "Time in: " . date('h:i A'), $records);
 
@@ -60,6 +62,7 @@ switch ($action) {
             reply(false, 'Naka-time out ka na ngayong araw.', $records, 409);
         }
         $records[$today]['out'] = $now;
+        $records[$today]['loc_out'] = readLoc();
         save($file, $records);
         reply(true, "Time out: " . date('h:i A'), $records);
 
