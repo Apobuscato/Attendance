@@ -23,7 +23,7 @@ function localApi(action, data) {
 
   if (action === 'timein') {
     if (db[d]?.in) fail('Naka-time in ka na ngayong araw.');
-    else { db[d] = { in: t, out: null, note: (data.note || '').trim() }; message = 'Time in: ' + fmtTime(t); }
+    else { db[d] = { in: t, out: null, note: (data.note || '').trim(), loc: data.lat ? { lat: +data.lat, lng: +data.lng, acc: +data.acc || 0, place: data.place || '' } : null }; message = 'Time in: ' + fmtTime(t); }
   } else if (action === 'timeout') {
     if (!db[d]?.in) fail('Mag-time in ka muna.');
     else if (db[d].out) fail('Naka-time out ka na ngayong araw.');
@@ -62,7 +62,38 @@ async function api(action, data = {}) {
     ? 'Naka-save sa data.json (PHP server).'
     : 'Naka-save sa browser na ito (localStorage). Hindi ito makikita sa ibang device.';
   render();
+  return json;
 }
+
+// ---------- Lokasyon ----------
+function getPosition() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve({ error: 'Hindi supported ng browser ang location.' });
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) }),
+      (e) => resolve({ error: e.code === 1 ? 'Hindi pinayagan ang location access.' : 'Hindi makuha ang lokasyon.' }),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  });
+}
+
+// Reverse geocoding gamit ang OpenStreetMap Nominatim (libre). Kung pumalya, coordinates na lang ang itatabi.
+async function getPlace(lat, lng) {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=en&lat=${lat}&lon=${lng}`, { signal: ctl.signal });
+    clearTimeout(timer);
+    const j = await res.json();
+    return j.display_name || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+const mapUrl = (l) => `https://www.google.com/maps?q=${l.lat},${l.lng}`;
+const placeText = (l) => l.place || `${l.lat}, ${l.lng}`;
+const locCell = (r) => (r.loc ? `<a href="${mapUrl(r.loc)}" target="_blank" rel="noopener" title="${esc(placeText(r.loc))} (±${r.loc.acc || '?'} m)">${esc(placeText(r.loc))}</a>` : '—');
 
 // ---------- Orasan ----------
 function tick() {
@@ -105,7 +136,7 @@ function render() {
   $('status').textContent = !hasIn
     ? 'Hindi ka pa naka-time in ngayon.'
     : !hasOut
-    ? `Naka-time in ka mula ${fmtTime(rec.in)}.`
+    ? `Naka-time in ka mula ${fmtTime(rec.in)}${rec.loc ? ' sa ' + placeText(rec.loc) : ' (walang lokasyon)'}.`
     : `Tapos na: ${fmtTime(rec.in)} – ${fmtTime(rec.out)} (${fmtDur(secs(rec))})`;
 
   const month = $('month').value;
@@ -122,14 +153,28 @@ function render() {
         <td>${fmtTime(r.in)}</td>
         <td>${fmtTime(r.out)}</td>
         <td>${r.out ? fmtDur(secs(r)) : r.in ? 'Ongoing' : '—'}</td>
+        <td class="loc">${locCell(r)}</td>
         <td><input class="inline" value="${esc(r.note)}" data-date="${r.date}" placeholder="Magdagdag ng note" aria-label="Note"></td>
         <td><button class="del" data-del="${r.date}" aria-label="Burahin ang record">Burahin</button></td>
       </tr>`).join('')
-    : '<tr><td colspan="6" class="empty">Wala pang record sa buwang ito. Pindutin ang Time In para magsimula.</td></tr>';
+    : '<tr><td colspan="7" class="empty">Wala pang record sa buwang ito. Pindutin ang Time In para magsimula.</td></tr>';
 }
 
 // ---------- Events ----------
-$('btnIn').addEventListener('click', () => api('timein', { note: $('note').value }));
+$('btnIn').addEventListener('click', async () => {
+  const btn = $('btnIn');
+  btn.disabled = true;
+  btn.textContent = 'Kinukuha ang lokasyon…';
+  const pos = await getPosition();
+  const data = { note: $('note').value };
+  if (!pos.error) {
+    Object.assign(data, pos);
+    data.place = await getPlace(pos.lat, pos.lng);
+  }
+  btn.textContent = 'Time In';
+  await api('timein', data);
+  if (pos.error) toast(pos.error + ' Na-time in nang walang lokasyon.', false);
+});
 $('btnOut').addEventListener('click', () => api('timeout'));
 $('month').addEventListener('change', render);
 
@@ -147,8 +192,8 @@ $('restart').addEventListener('click', () => {
 
 $('export').addEventListener('click', () => {
   const rows = records.filter((r) => r.date.startsWith($('month').value));
-  const csv = ['Date,Time In,Time Out,Hours,Note']
-    .concat(rows.map((r) => [r.date, r.in || '', r.out || '', (secs(r) / 3600).toFixed(2), `"${(r.note || '').replace(/"/g, '""')}"`].join(',')))
+  const csv = ['Date,Time In,Time Out,Hours,Location,Latitude,Longitude,Note']
+    .concat(rows.map((r) => [r.date, r.in || '', r.out || '', (secs(r) / 3600).toFixed(2), `"${(r.loc?.place || '').replace(/"/g, '""')}"`, r.loc?.lat ?? '', r.loc?.lng ?? '', `"${(r.note || '').replace(/"/g, '""')}"`].join(',')))
     .join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
