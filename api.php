@@ -1,78 +1,161 @@
-<?php
-// api.php — backend ng attendance. Naka-save sa data.json (walang database na kailangan).
-header('Content-Type: application/json; charset=utf-8');
-date_default_timezone_set('Asia/Manila');
+// app.js — logic ng frontend
+const $ = (id) => document.getElementById(id);
+let records = [];
+let today = '';
 
-$file = __DIR__ . '/data.json';
-if (!file_exists($file)) file_put_contents($file, '{}');
+// ---------- API ----------
+// Kapag may PHP server (XAMPP, php -S, hosting), si api.php ang gagamitin at sa data.json ise-save.
+// Kapag wala (hal. GitHub Pages), awtomatikong gagamit ng localStorage sa browser na ito.
+const KEY = 'attendance-records';
+let mode = 'server';
 
-function load($file) {
-    $d = json_decode(file_get_contents($file), true);
-    return is_array($d) ? $d : [];
+const manila = () => ({
+  date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' }),
+  time: new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Manila', hour12: false }),
+});
+
+function localApi(action, data) {
+  let db = {};
+  try { db = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) {}
+  const { date: d, time: t } = manila();
+  let ok = true, message = '';
+  const fail = (m) => { ok = false; message = m; };
+
+  if (action === 'timein') {
+    if (db[d]?.in) fail('Naka-time in ka na ngayong araw.');
+    else { db[d] = { in: t, out: null, note: (data.note || '').trim() }; message = 'Time in: ' + fmtTime(t); }
+  } else if (action === 'timeout') {
+    if (!db[d]?.in) fail('Mag-time in ka muna.');
+    else if (db[d].out) fail('Naka-time out ka na ngayong araw.');
+    else { db[d].out = t; message = 'Time out: ' + fmtTime(t); }
+  } else if (action === 'note') {
+    if (!db[data.date]) fail('Walang record sa petsang iyon.');
+    else { db[data.date].note = (data.note || '').trim(); message = 'Na-save ang note.'; }
+  } else if (action === 'delete') {
+    if (!db[data.date]) fail('Walang record sa petsang iyon.');
+    else { delete db[data.date]; message = 'Nabura ang record.'; }
+  } else if (action === 'reset') {
+    db = {}; message = 'Na-restart na. Wala nang record.';
+  }
+
+  try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { fail('Hindi ma-save sa browser.'); }
+  const records = Object.keys(db).sort().reverse().map((k) => ({ date: k, ...db[k] }));
+  return { ok, message, today: d, records };
 }
-function save($file, $d) {
-    file_put_contents($file, json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
-}
-function reply($ok, $msg, $records, $code = 200) {
-    http_response_code($code);
-    krsort($records);
-    echo json_encode([
-        'ok' => $ok,
-        'message' => $msg,
-        'today' => date('Y-m-d'),
-        'records' => array_values(array_map(fn($d, $r) => ['date' => $d] + $r, array_keys($records), $records)),
-    ]);
-    exit;
-}
 
-$records = load($file);
-$action  = $_POST['action'] ?? 'list';
-$today   = date('Y-m-d');
-$now     = date('H:i:s');
+async function api(action, data = {}) {
+  let json;
+  if (mode === 'server') {
+    try {
+      const res = await fetch('api.php', { method: 'POST', body: new URLSearchParams({ action, ...data }) });
+      json = await res.json();
+    } catch (e) {
+      mode = 'local'; // walang PHP, lumipat sa localStorage
+    }
+  }
+  if (mode === 'local') json = localApi(action, data);
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $action !== 'list') {
-    reply(false, 'POST lang ang pinapayagan.', $records, 405);
+  records = json.records || records;
+  today = json.today || today;
+  if (json.message) toast(json.message, json.ok);
+  $('storage').textContent = mode === 'server'
+    ? 'Naka-save sa data.json (PHP server).'
+    : 'Naka-save sa browser na ito (localStorage). Hindi ito makikita sa ibang device.';
+  render();
 }
 
-switch ($action) {
-    case 'timein':
-        if (!empty($records[$today]['in'])) {
-            reply(false, 'Naka-time in ka na ngayong araw.', $records, 409);
-        }
-        $records[$today] = ['in' => $now, 'out' => null, 'note' => trim($_POST['note'] ?? '')];
-        save($file, $records);
-        reply(true, "Time in: " . date('h:i A'), $records);
-
-    case 'timeout':
-        if (empty($records[$today]['in'])) {
-            reply(false, 'Mag-time in ka muna.', $records, 409);
-        }
-        if (!empty($records[$today]['out'])) {
-            reply(false, 'Naka-time out ka na ngayong araw.', $records, 409);
-        }
-        $records[$today]['out'] = $now;
-        save($file, $records);
-        reply(true, "Time out: " . date('h:i A'), $records);
-
-    case 'note':
-        $d = $_POST['date'] ?? '';
-        if (!isset($records[$d])) reply(false, 'Walang record sa petsang iyon.', $records, 404);
-        $records[$d]['note'] = trim($_POST['note'] ?? '');
-        save($file, $records);
-        reply(true, 'Na-save ang note.', $records);
-
-    case 'delete':
-        $d = $_POST['date'] ?? '';
-        if (!isset($records[$d])) reply(false, 'Walang record sa petsang iyon.', $records, 404);
-        unset($records[$d]);
-        save($file, $records);
-        reply(true, 'Nabura ang record.', $records);
-
-    case 'reset':
-        $records = [];
-        save($file, $records);
-        reply(true, 'Na-restart na. Wala nang record.', $records);
-
-    default:
-        reply(true, '', $records);
+// ---------- Orasan ----------
+function tick() {
+  const d = new Date();
+  $('clock').textContent = d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  $('date').textContent = d.toLocaleDateString('fil-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 }
+setInterval(tick, 1000);
+tick();
+
+// ---------- Helpers ----------
+const fmtTime = (t) => {
+  if (!t) return '—';
+  const [h, m] = t.split(':').map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+const toSec = (t) => { const [h, m, s] = t.split(':').map(Number); return h * 3600 + m * 60 + s; };
+const secs = (r) => (r.in && r.out ? Math.max(0, toSec(r.out) - toSec(r.in)) : 0);
+const fmtDur = (s) => (s ? `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m` : '—');
+const fmtDay = (d) => new Date(d + 'T00:00:00').toLocaleDateString('fil-PH', { weekday: 'short', month: 'short', day: 'numeric' });
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let toastTimer;
+function toast(msg, ok = true) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show ' + (ok ? 'ok' : 'err');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = ''), 2800);
+}
+
+// ---------- Render ----------
+function render() {
+  const rec = records.find((r) => r.date === today);
+  const hasIn = rec && rec.in, hasOut = rec && rec.out;
+
+  $('btnIn').disabled = !!hasIn;
+  $('btnOut').disabled = !hasIn || !!hasOut;
+  $('note').disabled = !!hasIn;
+  $('status').textContent = !hasIn
+    ? 'Hindi ka pa naka-time in ngayon.'
+    : !hasOut
+    ? `Naka-time in ka mula ${fmtTime(rec.in)}.`
+    : `Tapos na: ${fmtTime(rec.in)} – ${fmtTime(rec.out)} (${fmtDur(secs(rec))})`;
+
+  const month = $('month').value;
+  const rows = records.filter((r) => r.date.startsWith(month));
+  const total = rows.reduce((a, r) => a + secs(r), 0);
+  $('days').textContent = rows.length;
+  $('hours').textContent = fmtDur(total);
+  $('avg').textContent = fmtDur(rows.filter((r) => r.out).length ? total / rows.filter((r) => r.out).length : 0);
+
+  $('rows').innerHTML = rows.length
+    ? rows.map((r) => `
+      <tr>
+        <td>${fmtDay(r.date)}</td>
+        <td>${fmtTime(r.in)}</td>
+        <td>${fmtTime(r.out)}</td>
+        <td>${r.out ? fmtDur(secs(r)) : r.in ? 'Ongoing' : '—'}</td>
+        <td><input class="inline" value="${esc(r.note)}" data-date="${r.date}" placeholder="Magdagdag ng note" aria-label="Note"></td>
+        <td><button class="del" data-del="${r.date}" aria-label="Burahin ang record">Burahin</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="empty">Wala pang record sa buwang ito. Pindutin ang Time In para magsimula.</td></tr>';
+}
+
+// ---------- Events ----------
+$('btnIn').addEventListener('click', () => api('timein', { note: $('note').value }));
+$('btnOut').addEventListener('click', () => api('timeout'));
+$('month').addEventListener('change', render);
+
+$('rows').addEventListener('click', (e) => {
+  const d = e.target.dataset.del;
+  if (d && confirm(`Burahin ang record ng ${fmtDay(d)}?`)) api('delete', { date: d });
+});
+$('rows').addEventListener('change', (e) => {
+  if (e.target.classList.contains('inline')) api('note', { date: e.target.dataset.date, note: e.target.value });
+});
+
+$('restart').addEventListener('click', () => {
+  if (confirm('I-restart ang attendance? Mabubura ang LAHAT ng record at hindi na ito maibabalik.')) api('reset');
+});
+
+$('export').addEventListener('click', () => {
+  const rows = records.filter((r) => r.date.startsWith($('month').value));
+  const csv = ['Date,Time In,Time Out,Hours,Note']
+    .concat(rows.map((r) => [r.date, r.in || '', r.out || '', (secs(r) / 3600).toFixed(2), `"${(r.note || '').replace(/"/g, '""')}"`].join(',')))
+    .join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `attendance-${$('month').value}.csv`;
+  a.click();
+});
+
+// ---------- Simula ----------
+$('month').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' }).slice(0, 7);
+api('list');
