@@ -198,7 +198,7 @@ $('export').addEventListener('click', () => {
     .concat(rows.map((r) => [r.date, r.in || '', r.out || '', (secs(r) / 3600).toFixed(2), `"${(r.loc?.place || '').replace(/"/g, '""')}"`, r.loc?.lat ?? '', r.loc?.lng ?? '', `"${(r.loc_out?.place || '').replace(/"/g, '""')}"`, r.loc_out?.lat ?? '', r.loc_out?.lng ?? '', `"${(r.note || '').replace(/"/g, '""')}"`].join(',')))
     .join('\n');
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
   a.download = `attendance-${$('month').value}.csv`;
   a.click();
 });
