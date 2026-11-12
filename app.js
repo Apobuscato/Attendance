@@ -94,11 +94,7 @@ async function getPlace(lat, lng) {
 const mapUrl = (l) => `https://www.google.com/maps?q=${l.lat},${l.lng}`;
 const placeText = (l) => l.place || `${l.lat}, ${l.lng}`;
 const locLink = (l) => `<a href="${mapUrl(l)}" target="_blank" rel="noopener" title="${esc(placeText(l))} (±${l.acc || '?'} m)">${esc(placeText(l))}</a>`;
-const locCell = (r) => {
-  if (!r.in) return '—';
-  const line = (label, l) => `<div><small>${label}</small> ${l ? locLink(l) : '—'}</div>`;
-  return line('In:', r.loc) + (r.out ? line('Out:', r.loc_out) : '');
-};
+const locCell = (l, show = true) => (show && l ? locLink(l) : '—');
 
 // ---------- Orasan ----------
 function tick() {
@@ -158,11 +154,12 @@ function render() {
         <td>${fmtTime(r.in)}</td>
         <td>${fmtTime(r.out)}</td>
         <td>${r.out ? fmtDur(secs(r)) : r.in ? 'Ongoing' : '—'}</td>
-        <td class="loc">${locCell(r)}</td>
+        <td class="loc">${locCell(r.loc, r.in)}</td>
+        <td class="loc">${locCell(r.loc_out, r.out)}</td>
         <td><input class="inline" value="${esc(r.note)}" data-date="${r.date}" placeholder="Magdagdag ng note" aria-label="Note"></td>
         <td><button class="del" data-del="${r.date}" aria-label="Burahin ang record">Burahin</button></td>
       </tr>`).join('')
-    : '<tr><td colspan="7" class="empty">Wala pang record sa buwang ito. Pindutin ang Time In para magsimula.</td></tr>';
+    : '<tr><td colspan="8" class="empty">Wala pang record sa buwang ito. Pindutin ang Time In para magsimula.</td></tr>';
 }
 
 // ---------- Events ----------
